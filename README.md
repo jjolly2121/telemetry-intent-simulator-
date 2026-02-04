@@ -143,3 +143,19 @@ It is not intended for production deployment, but for:
 ## Author Notes
 
 This project was designed as a learning exercise in **systems architecture and observability**, inspired by safety-critical systems, distributed execution engines, and analytics platforms.
+
+## Running the Simulator Locally
+
+This project is designed to be lightweight and easy to run for experimentation and review.
+
+### Prerequisites
+- Python 3.10+
+- pip or conda
+
+### Setup
+
+Clone the repository:
+
+```bash
+git clone https://github.com/<your-username>/telemetry-intent-execution-simulator.git
+cd telemetry-intent-execution-simulator
