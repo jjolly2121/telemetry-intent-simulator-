@@ -1,109 +1,69 @@
-from typing import Dict
-
-from intent_manager import IntentManager, IntentStatus, Intent
-from policy_gate import PolicyGate, PolicyDecision
-from state_engine import StateEngine
-from telemetry import TelemetryBus
+from intent_manager import IntentStatus
 
 
 class Orchestrator:
     """
-    Central execution coordinator.
-
-    Responsibilities:
-    - Pull pending intents
-    - Evaluate policy decisions
-    - Apply state transitions
-    - Emit telemetry events
-
-    The orchestrator does NOT:
-    - Define policy
-    - Enforce safety
-    - Mutate intent state directly (delegates)
+    Coordinates intent → policy → safety → execution → telemetry.
     """
 
     def __init__(
         self,
-        intent_manager: IntentManager,
-        policy_gate: PolicyGate,
-        state_engine: StateEngine,
-        telemetry: TelemetryBus
+        intent_manager,
+        state_engine,
+        telemetry,
+        policy_gate,
+        safety_gate
     ):
         self.intent_manager = intent_manager
-        self.policy_gate = policy_gate
         self.state_engine = state_engine
         self.telemetry = telemetry
+        self.policy_gate = policy_gate
+        self.safety_gate = safety_gate
 
-    def step(self):
-        """
-        Executes one orchestration cycle.
-        """
-        pending_intents = self.intent_manager.get_pending_intents()
+    def run(self, cycles=1):
+        for cycle in range(cycles):
+            print(f"\n--- Cycle {cycle + 1} ---")
 
-        for intent in pending_intents:
-            self._process_intent(intent)
-
-    def _process_intent(self, intent: Intent):
-        """
-        Processes a single intent through the system.
-        """
-        # --- Telemetry: intent observed ---
-        self.telemetry.record(
-            event_type="INTENT_RECEIVED",
-            intent=intent
-        )
-
-        # --- Policy evaluation ---
-        decision, reason = self.policy_gate.evaluate(intent)
-
-        self.telemetry.record(
-            event_type="POLICY_EVALUATED",
-            intent=intent,
-            data={
-                "decision": decision.value,
-                "reason": reason
-            }
-        )
-
-        if decision == PolicyDecision.DENY:
-            self.intent_manager.update_status(
-                intent.intent_id,
-                IntentStatus.DENIED,
-                reason
+            intents = self.intent_manager.list_intents()
+            pending = next(
+                (i for i in intents.values() if i.status == IntentStatus.PENDING),
+                None
             )
 
-            self.telemetry.record(
-                event_type="INTENT_DENIED",
-                intent=intent,
-                data={"reason": reason}
-            )
-            return
+            if not pending:
+                print("No pending intents.")
+                continue
 
-        # --- State transition ---
-        try:
-            result: Dict = self.state_engine.apply(intent)
+            print(f"Evaluating intent {pending.intent_id}: {pending.command}")
 
-            self.intent_manager.update_status(
-                intent.intent_id,
-                IntentStatus.EXECUTED,
-                "State transition applied"
-            )
+            # POLICY CHECK
+            policy_decision = self.policy_gate.evaluate(pending)
+            if not policy_decision.authorized:
+                self.intent_manager.mark_blocked(
+                    pending.intent_id,
+                    policy_decision.reason
+                )
+                print(f"Blocked by policy: {policy_decision.reason}")
+                continue
 
-            self.telemetry.record(
-                event_type="STATE_APPLIED",
-                intent=intent,
-                data=result
-            )
+            self.intent_manager.mark_authorized(pending.intent_id)
 
-        except Exception as e:
-            self.intent_manager.update_status(
-                intent.intent_id,
-                IntentStatus.FAILED,
-                str(e)
+            # SAFETY CHECK (state-aware)
+            safety_decision = self.safety_gate.evaluate(
+                pending,
+                self.state_engine.system_state
             )
 
-            self.telemetry.record(
-                event_type="EXECUTION_FAILED",
-                intent=intent,
-                data={"error": str(e)}
-            )
+            if not safety_decision.safe:
+                self.intent_manager.mark_blocked(
+                    pending.intent_id,
+                    safety_decision.reason
+                )
+                print(f"Blocked by safety: {safety_decision.reason}")
+                continue
+
+            # EXECUTION (exactly one mutation)
+            result = self.state_engine.apply(pending)
+
+            if result:
+                self.telemetry.publish(result)
