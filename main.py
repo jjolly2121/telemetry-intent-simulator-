@@ -1,48 +1,34 @@
 from intent_manager import IntentManager
-from policy_gate import PolicyGate
-from state_engine import StateEngine
+from state_engine import StateEngine, SystemState
 from telemetry import TelemetryBus
 from orchestrator import Orchestrator
+from policy_gate import PolicyGate
+from safety_gate import SafetyGate
 
 
 def main():
-    # --- Initialize core systems ---
+    system_state = SystemState()
+
     intent_manager = IntentManager()
-    policy_gate = PolicyGate()
-    state_engine = StateEngine()
+    state_engine = StateEngine(system_state)
     telemetry = TelemetryBus()
+    policy_gate = PolicyGate()
+    safety_gate = SafetyGate()
 
     orchestrator = Orchestrator(
-        intent_manager=intent_manager,
-        policy_gate=policy_gate,
-        state_engine=state_engine,
-        telemetry=telemetry
+        intent_manager,
+        state_engine,
+        telemetry,
+        policy_gate,
+        safety_gate
     )
 
-    # --- Submit a test intent ---
-    intent = intent_manager.submit_intent(
-        intent_type="ADJUST_ORBIT",
-        payload={
-            "delta_v": 0.5,
-            "target_altitude_km": 420
-        },
-        source="ground_control"
+    intent_manager.submit_intent(
+        command="adjust_orbit",
+        parameters={"delta_v": 3.0}
     )
 
-    print(f"\nSubmitted intent: {intent.intent_id}\n")
-
-    # --- Run one orchestration cycle ---
-    orchestrator.step()
-
-    # --- Dump telemetry for inspection ---
-    print("\n--- TELEMETRY LOG ---")
-    for event in telemetry.get_events():
-        print(event)
-
-    # --- Final intent state ---
-    final_intent = intent_manager.get_intent(intent.intent_id)
-    print("\n--- FINAL INTENT STATE ---")
-    print(final_intent)
+    orchestrator.run(cycles=3)
 
 
 if __name__ == "__main__":
