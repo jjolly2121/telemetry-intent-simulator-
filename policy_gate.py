@@ -1,55 +1,108 @@
-from typing import Tuple, Optional
-from intent_manager import Intent, IntentStatus
+from typing import List, Dict, Optional
+from intent_manager import Intent
 
 
-class PolicyDecision:
+class PolicyResult:
     """
-    Simple container for policy evaluation results.
+    Pure scoring and selection result.
     """
-    def __init__(self, authorized: bool, reason: Optional[str] = None):
-        self.authorized = authorized
+
+    def __init__(
+        self,
+        selected_intent: Optional[Intent],
+        scores: Dict[str, float],
+        reason: str
+    ):
+        self.selected_intent = selected_intent
+        self.scores = scores
         self.reason = reason
 
 
 class PolicyGate:
     """
-    Evaluates intent against policy and safety rules.
+    Intent scoring and selection logic.
 
-    This layer may block execution but must never destroy intent.
+    Responsibilities:
+    - Score intents
+    - Select highest scoring intent
+    - Apply SAFE dominance
+    - Apply LOW_POWER bias
+    - Apply NOMINAL downgrade
+    - Apply lightweight history penalty
+
+    Does NOT:
+    - Detect CRITICAL
+    - Inject intents
+    - Override selection
+    - Mutate state
     """
 
-    def __init__(self):
-        # Example thresholds / rules (can be expanded later)
-        self.max_delta_v = 5.0
-        self.forbidden_commands = {"shutdown_system"}
+    RECOVERY_SCALE = 1000.0
+    LOW_POWER_BIAS = 50.0
+    NOMINAL_RECOVERY_PENALTY = -200.0
 
-    def evaluate(self, intent: Intent) -> PolicyDecision:
-        """
-        Evaluate an intent and return a PolicyDecision.
-        """
+    HISTORY_PENALTY_FACTOR = 0.5
 
-        # Rule 1: forbidden commands
-        if intent.command in self.forbidden_commands:
-            return PolicyDecision(
-                authorized=False,
-                reason=f"Command '{intent.command}' is forbidden by policy"
-            )
+    def evaluate(
+        self,
+        intents: List[Intent],
+        system_state
+    ) -> PolicyResult:
 
-        # Rule 2: parameter safety check
-        if intent.command == "adjust_orbit":
-            delta_v = intent.parameters.get("delta_v")
+        if not intents:
+            return PolicyResult(None, {}, "no_active_intents")
 
-            if delta_v is None:
-                return PolicyDecision(
-                    authorized=False,
-                    reason="Missing required parameter: delta_v"
+        scores = {}
+
+        for intent in intents:
+            score = 0.0
+
+            # ---- Recovery Scoring ----
+
+            if intent.intent_type == "battery_recovery":
+                severity = max(
+                    0.0,
+                    (system_state.SAFE_EXIT_BATTERY - system_state.battery_level)
+                    / system_state.SAFE_EXIT_BATTERY
                 )
+                score += severity * self.RECOVERY_SCALE
 
-            if delta_v > self.max_delta_v:
-                return PolicyDecision(
-                    authorized=False,
-                    reason=f"delta_v {delta_v} exceeds max allowed {self.max_delta_v}"
+            elif intent.intent_type == "thermal_recovery":
+                severity = max(
+                    0.0,
+                    (system_state.temperature - system_state.SAFE_EXIT_TEMP)
+                    / system_state.SAFE_EXIT_TEMP
                 )
+                score += severity * self.RECOVERY_SCALE
 
-        # Passed all checks
-        return PolicyDecision(authorized=True)
+            # ---- Mission Intent Base Score ----
+
+            elif intent.intent_type == "orbit_correction":
+                score += 100.0
+
+            # ---- Mode Bias Adjustments ----
+
+            if system_state.mode == "LOW_POWER":
+                if intent.intent_type.endswith("_recovery"):
+                    score += self.LOW_POWER_BIAS
+
+            if system_state.mode == "NOMINAL":
+                if intent.intent_type.endswith("_recovery"):
+                    score += self.NOMINAL_RECOVERY_PENALTY
+
+            # ---- History Penalty ----
+
+            score -= intent.safety_block_cycles * self.HISTORY_PENALTY_FACTOR
+
+            scores[intent.intent_id] = score
+
+        # ---- Selection ----
+
+        selected_id = max(scores, key=scores.get)
+        selected_intent = next(i for i in intents if i.intent_id == selected_id)
+
+        return PolicyResult(
+            selected_intent=selected_intent,
+            scores=scores,
+            reason="highest_score_selected"
+        )

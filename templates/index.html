@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Telemetry Intent Simulator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f4f4f4;
+        }
+        .blocked {
+            color: red;
+        }
+        .authorized {
+            color: green;
+        }
+        .pending {
+            color: orange;
+        }
+        .executed {
+            color: blue;
+        }
+        .controls a {
+            margin-right: 15px;
+            font-weight: bold;
+        }
+        .error {
+            color: red;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Telemetry Intent Simulator</h1>
+
+<!-- ================= EXECUTION CONTROL ================= -->
+<h2>Execution Control</h2>
+<div class="controls">
+    <a href="/start">▶ Start Auto Run</a>
+    <a href="/stop">⏹ Stop Auto Run</a>
+</div>
+
+<!-- ================= INTENT SUBMISSION ================= -->
+<h2>Submit Intent</h2>
+
+<form method="POST" action="/submit">
+    <label>
+        Command:
+        <select name="command" required>
+            <option value="adjust_orbit">adjust_orbit</option>
+            <option value="set_health">set_health</option>
+        </select>
+    </label>
+    <br><br>
+
+    <label>
+        Parameters (JSON):
+        <input
+            type="text"
+            name="parameters"
+            placeholder='{"delta_v": 2.5}'
+            size="50"
+            required
+        >
+    </label>
+    <br><br>
+
+    <button type="submit">Submit Intent</button>
+</form>
+
+{% if error %}
+<div class="error">{{ error }}</div>
+{% endif %}
+
+<!-- ================= SYSTEM STATE ================= -->
+<h2>System State</h2>
+<pre>{{ system_state | tojson(indent=2) }}</pre>
+
+<!-- ================= INTENT TABLE ================= -->
+<h2>Intent Ledger</h2>
+
+<table>
+    <thead>
+        <tr>
+            <th>Intent ID</th>
+            <th>Command</th>
+            <th>Status</th>
+            <th>Parameters</th>
+            <th>Block Reason</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for intent in intents %}
+        <tr>
+            <td>{{ intent.intent_id }}</td>
+            <td>{{ intent.command }}</td>
+            <td class="{{ intent.status.value }}">
+                {{ intent.status.value }}
+            </td>
+            <td>{{ intent.parameters }}</td>
+            <td>{{ intent.block_reason or "" }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<!-- ================= TELEMETRY ================= -->
+<h2>Telemetry Feed</h2>
+<ul>
+{% for event in telemetry %}
+    <li>{{ event }}</li>
+{% endfor %}
+</ul>
+
+</body>
+</html>

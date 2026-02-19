@@ -1,73 +1,191 @@
-from typing import Dict, Optional
+from typing import Optional
 from intent_manager import Intent, IntentStatus
 
 
 class SystemState:
     """
-    Represents the mutable system state.
-    This state may only be updated by the StateEngine.
+    Physical system state.
+
+    Owns:
+    - Position
+    - Battery
+    - Temperature
+    - Mode
+    - Hysteresis thresholds
     """
 
-    def __init__(self):
-        # Example state variables (generic by design)
-        self.position = 0.0
-        self.health = "nominal"
+    # SAFE thresholds
+    SAFE_ENTRY_BATTERY = 10
+    SAFE_EXIT_BATTERY = 20
+    SAFE_EXIT_EPSILON = 0.5
 
-    def snapshot(self) -> Dict:
-        """
-        Returns a read-only snapshot of current state.
-        """
+    SAFE_ENTRY_TEMP = 120
+    SAFE_EXIT_TEMP = 100
+    SAFE_EXIT_TEMP_EPSILON = 1.0
+
+    # LOW_POWER thresholds
+    LOW_POWER_ENTRY = 25
+    LOW_POWER_EXIT = 30
+    # Hard safety bounds
+    POSITION_MIN = -10.0
+    POSITION_MAX = 10.0
+    MAX_TEMP = 150.0
+    MIN_BATTERY = 0.0
+
+    def __init__(self):
+        self.position = 0.0
+        self.battery_level = 100.0
+        self.temperature = 25.0
+        self.mode = "NOMINAL"
+
+    def snapshot(self):
         return {
             "position": self.position,
-            "health": self.health
+            "battery_level": self.battery_level,
+            "temperature": self.temperature,
+            "mode": self.mode,
         }
 
 
 class StateEngine:
     """
-    Applies exactly one state mutation per execution cycle.
+    Applies exactly one mutation per cycle.
+
+    Responsibilities:
+    - Update mode (hysteresis)
+    - Apply recovery physics
+    - Apply mission physics
+    - Complete intents based on physical outcome
     """
 
     def __init__(self, system_state: SystemState):
         self.system_state = system_state
 
-    def apply(self, intent: Intent) -> Optional[Dict]:
-        """
-        Applies an authorized intent to the system state.
+    def apply(self, intent: Optional[Intent]):
 
-        Returns a result dict describing the mutation,
-        or None if no mutation occurred.
-        """
+        # ---- Mode update happens first ----
+        self._update_mode()
 
-        # Enforce lifecycle rule
-        if intent.status != IntentStatus.AUTHORIZED:
-            return None
+        if intent is None:
+            return False
 
-        result = None
+        intent.evaluation_cycles += 1
+        intent.status = IntentStatus.ACTIVE
 
-        # Execute command
-        if intent.command == "adjust_orbit":
-            delta_v = intent.parameters.get("delta_v", 0.0)
+        # ---- SAFE Recovery Physics ----
 
-            # Single, deterministic state mutation
-            self.system_state.position += delta_v
+        if self.system_state.mode == "SAFE":
+            self._apply_recovery_physics(intent)
+            self._check_completion(intent)
+            return True
 
-            result = {
-                "command": intent.command,
-                "delta_v": delta_v,
-                "new_position": self.system_state.position
-            }
+        # ---- Mission Physics ----
 
-        elif intent.command == "set_health":
-            new_health = intent.parameters.get("health", "unknown")
-            self.system_state.health = new_health
+        if intent.intent_type == "orbit_correction":
+            self._apply_orbit_correction()
 
-            result = {
-                "command": intent.command,
-                "health": new_health
-            }
+        # ---- Recovery in LOW_POWER or NOMINAL ----
 
-        # Mark intent as executed only after mutation
-        intent.status = IntentStatus.EXECUTED
+        if intent.intent_type in ("battery_recovery", "thermal_recovery"):
+            self._apply_recovery_physics(intent)
 
-        return result
+        # ---- Completion Logic ----
+
+        self._check_completion(intent)
+        return True
+
+    # -----------------------------
+    # Mode Management
+    # -----------------------------
+
+    def _update_mode(self):
+
+        s = self.system_state
+
+        # SAFE entry
+        if (
+            s.battery_level <= s.SAFE_ENTRY_BATTERY
+            or s.temperature >= s.SAFE_ENTRY_TEMP
+        ):
+            s.mode = "SAFE"
+            return
+
+        # SAFE exit
+        if s.mode == "SAFE":
+            if (
+                s.battery_level >= s.SAFE_EXIT_BATTERY - s.SAFE_EXIT_EPSILON
+                and s.temperature <= s.SAFE_EXIT_TEMP + s.SAFE_EXIT_TEMP_EPSILON
+            ):
+                s.mode = "NOMINAL"
+                return
+
+        # LOW_POWER entry
+        if s.battery_level <= s.LOW_POWER_ENTRY:
+            s.mode = "LOW_POWER"
+            return
+
+        # LOW_POWER exit
+        if s.mode == "LOW_POWER":
+            if s.battery_level >= s.LOW_POWER_EXIT:
+                s.mode = "NOMINAL"
+
+    # -----------------------------
+    # Physics
+    # -----------------------------
+
+    def _apply_orbit_correction(self):
+
+        s = self.system_state
+
+        step = 0.5
+        battery_cost_per_unit = 2.0
+        thermal_cost_per_unit = 4.0
+
+        battery_cost = step * battery_cost_per_unit
+        thermal_cost = step * thermal_cost_per_unit
+
+        s.position += step
+        s.battery_level -= battery_cost
+        s.temperature += thermal_cost
+
+    def _apply_recovery_physics(self, intent: Intent):
+
+        s = self.system_state
+
+        if intent.intent_type == "battery_recovery":
+            deficit = s.SAFE_EXIT_BATTERY - s.battery_level
+            if deficit > 0:
+                s.battery_level += 0.1 * deficit
+
+        if intent.intent_type == "thermal_recovery":
+            excess = s.temperature - s.SAFE_EXIT_TEMP
+            if excess > 0:
+                s.temperature -= 0.1 * excess
+
+    # -----------------------------
+    # Completion Logic
+    # -----------------------------
+
+    def _check_completion(self, intent: Intent):
+
+        s = self.system_state
+
+        # Mission completion example
+        if intent.intent_type == "orbit_correction":
+            goal_value = 3.0
+            if intent.goal_metric == "position" and intent.goal_reference is not None:
+                goal_value = float(intent.goal_reference)
+
+            if s.position >= goal_value:
+                intent.status = IntentStatus.COMPLETED
+
+        # Recovery completion after stable NOMINAL cycle
+        if intent.intent_type.endswith("_recovery"):
+
+            if s.mode == "NOMINAL":
+                intent.stable_nominal_cycles += 1
+            else:
+                intent.stable_nominal_cycles = 0
+
+            if intent.stable_nominal_cycles >= 1:
+                intent.status = IntentStatus.COMPLETED

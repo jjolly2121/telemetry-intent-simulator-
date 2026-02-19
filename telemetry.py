@@ -1,75 +1,74 @@
-from datetime import datetime
-from typing import Dict, List, Optional
-from intent_manager import Intent
-
-
-class TelemetryEvent:
-    """
-    Immutable telemetry record.
-    """
-
-    def __init__(
-        self,
-        event_type: str,
-        intent: Optional[Intent],
-        data: Optional[Dict] = None
-    ):
-        self.timestamp = datetime.utcnow().isoformat()
-        self.event_type = event_type
-        self.intent_id = intent.intent_id if intent else None
-        self.command = intent.command if intent else None
-        self.status = intent.status.value if intent else None
-        self.data = data or {}
-
-    def serialize(self) -> Dict:
-        """
-        Converts telemetry event to structured dictionary.
-        """
-        return {
-            "timestamp": self.timestamp,
-            "event_type": self.event_type,
-            "intent_id": self.intent_id,
-            "command": self.command,
-            "status": self.status,
-            "data": self.data
-        }
+from typing import List, Dict, Any
+import time
 
 
 class TelemetryBus:
     """
-    Central telemetry collection system.
-    Read-only observer of system behavior.
+    Append-only telemetry event bus.
+
+    Observational only.
+    No authority.
+    No mutation.
     """
 
     def __init__(self):
-        self._events: List[TelemetryEvent] = []
+        self._frames: List[Dict[str, Any]] = []
 
-    def record(
+    def publish_frame(self, frame: Dict[str, Any]):
+        self._frames.append({
+            "timestamp": time.time(),
+            "type": "cycle_frame",
+            "data": frame
+        })
+
+    def get_frames(self) -> List[Dict[str, Any]]:
+        return list(self._frames)
+
+
+class TelemetryBuilder:
+    """
+    Pure projection layer.
+
+    Converts system state and decisions
+    into structured, JSON-safe telemetry.
+    """
+
+    def build_frame(
         self,
-        event_type: str,
-        intent: Optional[Intent] = None,
-        data: Optional[Dict] = None
-    ):
-        """
-        Records a telemetry event.
-        """
-        event = TelemetryEvent(
-            event_type=event_type,
-            intent=intent,
-            data=data
+        system_state,
+        policy_result,
+        executed_intent,
+        safety_result,
+        override_applied: bool,
+        lock_applied: bool
+    ) -> Dict[str, Any]:
+
+        state_snapshot = system_state.snapshot()
+
+        policy_selected = (
+            policy_result.selected_intent.intent_id
+            if policy_result.selected_intent else None
         )
-        self._events.append(event)
 
-    def dump(self) -> List[Dict]:
-        """
-        Returns all telemetry events as serialized dicts.
-        """
-        return [event.serialize() for event in self._events]
+        executed_id = (
+            executed_intent.intent_id
+            if executed_intent else None
+        )
 
-    def latest(self) -> Optional[Dict]:
-        """
-        Returns the most recent telemetry event.
-        """
-        if not self._events:
-            return None
-        return self._events[-1].serialize()
+        return {
+            "state": state_snapshot,
+            "policy": {
+                "selected_intent_id": policy_selected,
+                "scores": policy_result.scores,
+            },
+            "execution": {
+                "executed_intent_id": executed_id,
+                "override_applied": override_applied,
+                "lock_applied": lock_applied,
+            },
+            "safety": {
+                "blocked": safety_result.blocked,
+                "critical_domains": safety_result.critical_domains,
+                "reason": safety_result.reason,
+            }
+        }

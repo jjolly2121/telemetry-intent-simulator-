@@ -1,48 +1,59 @@
 from intent_manager import IntentManager
-from policy_gate import PolicyGate
-from state_engine import StateEngine
+from state_engine import StateEngine, SystemState
 from telemetry import TelemetryBus
 from orchestrator import Orchestrator
+from policy_gate import PolicyGate
+from safety_gate import SafetyGate
 
 
 def main():
-    # --- Initialize core systems ---
-    intent_manager = IntentManager()
-    policy_gate = PolicyGate()
-    state_engine = StateEngine()
-    telemetry = TelemetryBus()
 
+    # --------------------------------
+    # System State
+    # --------------------------------
+    system_state = SystemState()
+
+    # --------------------------------
+    # Core Components
+    # --------------------------------
+    intent_manager = IntentManager()
+    state_engine = StateEngine(system_state)
+    telemetry_bus = TelemetryBus()
+    policy_gate = PolicyGate()
+    safety_gate = SafetyGate()
+
+    # --------------------------------
+    # Orchestrator
+    # --------------------------------
     orchestrator = Orchestrator(
         intent_manager=intent_manager,
-        policy_gate=policy_gate,
         state_engine=state_engine,
-        telemetry=telemetry
+        telemetry=telemetry_bus,  # ← FIXED
+        policy_gate=policy_gate,
+        safety_gate=safety_gate
     )
 
-    # --- Submit a test intent ---
-    intent = intent_manager.submit_intent(
-        intent_type="ADJUST_ORBIT",
-        payload={
-            "delta_v": 0.5,
-            "target_altitude_km": 420
-        },
-        source="ground_control"
+    # --------------------------------
+    # Submit Outcome-Based Intent
+    # --------------------------------
+    intent_manager.submit_intent(
+        intent_type="orbit_correction",
+        goal_target="orbital_deviation",
+        goal_reference=3.0,
+        goal_metric="position",
+        goal_tolerance=0.1
     )
 
-    print(f"\nSubmitted intent: {intent.intent_id}\n")
+    # --------------------------------
+    # Run Simulation
+    # --------------------------------
+    orchestrator.run(cycles=10)
 
-    # --- Run one orchestration cycle ---
-    orchestrator.step()
-
-    # --- Dump telemetry for inspection ---
-    print("\n--- TELEMETRY LOG ---")
-    for event in telemetry.get_events():
-        print(event)
-
-    # --- Final intent state ---
-    final_intent = intent_manager.get_intent(intent.intent_id)
-    print("\n--- FINAL INTENT STATE ---")
-    print(final_intent)
+    # --------------------------------
+    # Print Telemetry
+    # --------------------------------
+    for frame in telemetry_bus.get_frames():  # ← get_frames not get_events
+        print(frame)
 
 
 if __name__ == "__main__":

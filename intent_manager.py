@@ -1,99 +1,172 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 import time
 import uuid
 
 
+# -------------------------------------------------
+# Intent Status Enum
+# -------------------------------------------------
+
 class IntentStatus(Enum):
     PENDING = "pending"
-    AUTHORIZED = "authorized"
-    BLOCKED = "blocked"
-    EXECUTED = "executed"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    DENIED = "denied"
 
+
+# -------------------------------------------------
+# Intent Model
+# -------------------------------------------------
 
 @dataclass
 class Intent:
     """
-    Represents a durable command intent.
-    Intent is not an action — it is a request awaiting validation and execution.
+    Durable, outcome-oriented intent owned by the satellite.
+
+    Intent describes *what condition should become true*,
+    not *how it is achieved*.
     """
+
+    # Identity
     intent_id: str
-    command: str
-    parameters: Dict
+    intent_type: str
     created_at: float
+
+    # Outcome definition
+    goal_target: Optional[str] = None
+    goal_reference: Optional[Any] = None
+    goal_metric: Optional[str] = None
+    goal_tolerance: Optional[Any] = None
+
+    # Lifecycle
     status: IntentStatus = IntentStatus.PENDING
     last_updated: float = field(default_factory=time.time)
+
+    # Evaluation Tracking
+    evaluation_cycles: int = 0
+    safety_block_cycles: int = 0
+    consecutive_selected_cycles: int = 0
+    stable_nominal_cycles: int = 0
+
+    # Observability
     block_reason: Optional[str] = None
 
 
+# -------------------------------------------------
+# Intent Manager
+# -------------------------------------------------
+
 class IntentManager:
     """
-    Stores and manages durable intent.
-    Intents persist independently of execution success or failure.
+    Owns storage and lifecycle of intents.
+
+    Responsibilities:
+    - Store durable intents
+    - Track active vs archived
+    - Provide filtered queries
+    - Archive completed/denied intents
+
+    Does NOT:
+    - Score intents
+    - Enforce safety
+    - Apply physics
     """
 
     def __init__(self):
         self._intents: Dict[str, Intent] = {}
 
-    def submit_intent(self, command: str, parameters: Dict) -> Intent:
-        """
-        Accepts a new command and stores it as durable intent.
-        """
+    # ---------------------------------------------
+    # Submit
+    # ---------------------------------------------
+
+    def submit_intent(
+        self,
+        intent_type: str,
+        goal_target: Optional[str] = None,
+        goal_reference: Optional[Any] = None,
+        goal_metric: Optional[str] = None,
+        goal_tolerance: Optional[Any] = None
+    ) -> Intent:
+
         intent_id = str(uuid.uuid4())
+
         intent = Intent(
             intent_id=intent_id,
-            command=command,
-            parameters=parameters,
-            created_at=time.time()
+            intent_type=intent_type,
+            created_at=time.time(),
+            goal_target=goal_target,
+            goal_reference=goal_reference,
+            goal_metric=goal_metric,
+            goal_tolerance=goal_tolerance
         )
 
         self._intents[intent_id] = intent
+
         return intent
 
-    def get_intent(self, intent_id: str) -> Optional[Intent]:
-        """
-        Retrieve an intent by ID.
-        """
-        return self._intents.get(intent_id)
+    # ---------------------------------------------
+    # Active Queries
+    # ---------------------------------------------
 
-    def list_intents(self) -> Dict[str, Intent]:
+    def list_active(self):
         """
-        Returns all known intents.
+        Return all non-archived active intents.
         """
-        return self._intents
+        return [
+            intent
+            for intent in self._intents.values()
+            if intent.status in (IntentStatus.PENDING, IntentStatus.ACTIVE)
+        ]
 
-    def mark_authorized(self, intent_id: str):
+    def get_active_by_type(self, intent_type: str) -> Optional[Intent]:
         """
-        Marks intent as authorized for execution.
+        Return active intent of given type if exists.
         """
-        intent = self.get_intent(intent_id)
-        if not intent:
-            raise ValueError("Intent not found")
+        for intent in self._intents.values():
+            if (
+                intent.intent_type == intent_type and
+                intent.status in (IntentStatus.PENDING, IntentStatus.ACTIVE)
+            ):
+                return intent
 
-        intent.status = IntentStatus.AUTHORIZED
+        return None
+
+    # ---------------------------------------------
+    # Lifecycle Updates
+    # ---------------------------------------------
+
+    def mark_active(self, intent: Intent):
+        intent.status = IntentStatus.ACTIVE
         intent.last_updated = time.time()
 
-    def mark_blocked(self, intent_id: str, reason: str):
-        """
-        Blocks intent due to policy or safety violation.
-        Intent is preserved with an explanation.
-        """
-        intent = self.get_intent(intent_id)
-        if not intent:
-            raise ValueError("Intent not found")
+    def mark_completed(self, intent: Intent):
+        intent.status = IntentStatus.COMPLETED
+        intent.last_updated = time.time()
 
-        intent.status = IntentStatus.BLOCKED
+    def mark_denied(self, intent: Intent, reason: str):
+        intent.status = IntentStatus.DENIED
         intent.block_reason = reason
         intent.last_updated = time.time()
 
-    def mark_executed(self, intent_id: str):
-        """
-        Marks intent as executed after successful state mutation.
-        """
-        intent = self.get_intent(intent_id)
-        if not intent:
-            raise ValueError("Intent not found")
+    # ---------------------------------------------
+    # Archival
+    # ---------------------------------------------
 
-        intent.status = IntentStatus.EXECUTED
-        intent.last_updated = time.time()
+    def archive_completed(self):
+        """
+        Remove completed or denied intents
+        from active storage.
+        """
+        to_remove = []
+
+        for intent_id, intent in self._intents.items():
+            if intent.status in (
+                IntentStatus.COMPLETED,
+                IntentStatus.DENIED
+            ):
+                to_remove.append(intent_id)
+
+        for intent_id in to_remove:
+            del self._intents[intent_id]
