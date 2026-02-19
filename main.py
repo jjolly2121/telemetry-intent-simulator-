@@ -12,6 +12,7 @@ def main():
     # System State
     # --------------------------------
     system_state = SystemState()
+    system_state.battery_level = 4.0
 
     # --------------------------------
     # Core Components

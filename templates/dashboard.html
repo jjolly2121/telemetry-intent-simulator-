@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mission Control Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="title">Mission Control</div>
+      <div class="subtitle">Telemetry Stream • Read-Only</div>
+    </header>
+
+    <main class="grid">
+      <section class="panel">
+        <div class="panel-title">System</div>
+        <div class="metric-row">
+          <div class="metric-label">Position</div>
+          <div id="position" class="metric-value">—</div>
+        </div>
+        <div class="metric-row">
+          <div class="metric-label">Battery</div>
+          <div class="metric-value">
+            <div class="progress">
+              <div id="battery-bar" class="bar"></div>
+            </div>
+            <span id="battery" class="metric-inline">—</span>
+          </div>
+        </div>
+        <div class="metric-row">
+          <div class="metric-label">Temperature</div>
+          <div class="metric-value">
+            <div class="progress">
+              <div id="temp-bar" class="bar"></div>
+            </div>
+            <span id="temperature" class="metric-inline">—</span>
+          </div>
+        </div>
+        <div class="metric-row">
+          <div class="metric-label">Mode</div>
+          <div id="mode" class="metric-value badge">—</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title">Policy</div>
+        <div class="metric-row">
+          <div class="metric-label">Selected Intent</div>
+          <div id="selected-intent" class="metric-value">—</div>
+        </div>
+        <div class="metric-row">
+          <div class="metric-label">Scores</div>
+          <div id="intent-scores" class="metric-value mono">—</div>
+        </div>
+        <div class="metric-row">
+          <div class="metric-label">Override</div>
+          <div id="override" class="metric-value badge">—</div>
+        </div>
+        <div class="metric-row">
+          <div class="metric-label">Lock</div>
+          <div id="lock" class="metric-value badge">—</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title">Safety</div>
+        <div class="metric-row">
+          <div class="metric-label">Blocked</div>
+          <div id="blocked" class="metric-value badge">—</div>
+        </div>
+        <div class="metric-row">
+          <div class="metric-label">Critical Domains</div>
+          <div id="critical" class="metric-value">—</div>
+        </div>
+        <div class="metric-row">
+          <div class="metric-label">Reason</div>
+          <div id="reason" class="metric-value">—</div>
+        </div>
+      </section>
+
+      <section class="panel chart">
+        <div class="panel-title">Battery Trend</div>
+        <canvas id="batteryChart"></canvas>
+      </section>
+
+      <section class="panel chart">
+        <div class="panel-title">Temperature Trend</div>
+        <canvas id="tempChart"></canvas>
+      </section>
+
+      <section class="panel chart">
+        <div class="panel-title">Position Trend</div>
+        <canvas id="positionChart"></canvas>
+      </section>
+
+      <section class="panel log">
+        <div class="panel-title">Cycle Frames</div>
+        <div class="log-header">
+          <div>Cycle</div>
+          <div>Time</div>
+          <div>Pos</div>
+          <div>Bat</div>
+          <div>Temp</div>
+          <div>Mode</div>
+          <div>Selected</div>
+          <div>Executed</div>
+          <div>Blocked</div>
+        </div>
+        <div id="cycle-log" class="log-body"></div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const socket = io();
+
+    const maxPoints = 60;
+    const maxLogRows = 80;
+    const batteryData = [];
+    const tempData = [];
+    const positionData = [];
+    const labels = [];
+    let cycleCount = 0;
+
+    const makeChart = (ctx, label, color, yConfig, annotations) => new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label,
+          data: [],
+          borderColor: color,
+          backgroundColor: 'rgba(0,0,0,0)',
+          tension: 0.25,
+          pointRadius: 0,
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        animation: false,
+        plugins: {
+          legend: { labels: { color: '#cfd6e4' } },
+          annotation: { annotations: annotations || {} }
+        },
+        scales: {
+          x: { ticks: { color: '#7c879a' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+          y: {
+            ticks: { color: '#7c879a', callback: yConfig.tickFormat },
+            grid: { color: 'rgba(255,255,255,0.05)' },
+            min: yConfig.min,
+            max: yConfig.max
+          }
+        }
+      }
+    });
+
+    const batteryThresholds = {
+      lowPower: 25,
+      safe: 10
+    };
+
+    const tempThresholds = {
+      safe: 120
+    };
+
+    const positionBounds = {
+      min: -10,
+      max: 10
+    };
+
+    const batteryChart = makeChart(
+      document.getElementById('batteryChart'),
+      'Battery',
+      '#4cc9f0',
+      {
+        min: 0,
+        max: 100,
+        tickFormat: (v) => `${v}%`
+      },
+      {
+        lowPower: {
+          type: 'line',
+          yMin: batteryThresholds.lowPower,
+          yMax: batteryThresholds.lowPower,
+          borderColor: 'rgba(245, 158, 11, 0.6)',
+          borderWidth: 1
+        },
+        safe: {
+          type: 'line',
+          yMin: batteryThresholds.safe,
+          yMax: batteryThresholds.safe,
+          borderColor: 'rgba(239, 68, 68, 0.7)',
+          borderWidth: 1
+        }
+      }
+    );
+    const tempChart = makeChart(
+      document.getElementById('tempChart'),
+      'Temperature',
+      '#f7b267',
+      {
+        min: 0,
+        max: 130,
+        tickFormat: (v) => `${v}°C`
+      },
+      {
+        safe: {
+          type: 'line',
+          yMin: tempThresholds.safe,
+          yMax: tempThresholds.safe,
+          borderColor: 'rgba(239, 68, 68, 0.7)',
+          borderWidth: 1
+        }
+      }
+    );
+    const positionChart = makeChart(
+      document.getElementById('positionChart'),
+      'Position',
+      '#8ac926',
+      {
+        min: positionBounds.min,
+        max: positionBounds.max,
+        tickFormat: (v) => v
+      },
+      {}
+    );
+
+    const setBadge = (el, text, type) => {
+      el.textContent = text;
+      el.classList.remove('ok', 'warn', 'danger');
+      if (type) el.classList.add(type);
+    };
+
+    const formatScores = (scores) => {
+      const entries = Object.entries(scores || {});
+      if (!entries.length) return '—';
+      return entries.map(([id, score]) => `${id.slice(0,8)}: ${score.toFixed(1)}`).join(' | ');
+    };
+
+    const updateProgress = (barEl, value, thresholds) => {
+      const v = Math.max(0, Math.min(100, value));
+      barEl.style.width = `${v}%`;
+      barEl.classList.remove('ok', 'warn', 'danger');
+      if (v <= thresholds.danger) barEl.classList.add('danger');
+      else if (v <= thresholds.warn) barEl.classList.add('warn');
+      else barEl.classList.add('ok');
+    };
+
+    socket.on('telemetry', (frame) => {
+      const data = frame.data;
+      const state = data.state;
+      cycleCount += 1;
+
+      document.getElementById('position').textContent = state.position.toFixed(2);
+      document.getElementById('battery').textContent = `${state.battery_level.toFixed(1)}%`;
+      document.getElementById('temperature').textContent = `${state.temperature.toFixed(1)}°C`;
+
+      updateProgress(document.getElementById('battery-bar'), state.battery_level, {
+        warn: 50,
+        danger: 20
+      });
+      updateProgress(document.getElementById('temp-bar'), Math.min(state.temperature, 100), {
+        warn: 70,
+        danger: 85
+      });
+
+      const modeEl = document.getElementById('mode');
+      if (state.mode === 'NOMINAL') setBadge(modeEl, 'NOMINAL', 'ok');
+      else if (state.mode === 'LOW_POWER') setBadge(modeEl, 'LOW_POWER', 'warn');
+      else setBadge(modeEl, 'SAFE', 'danger');
+
+      document.getElementById('selected-intent').textContent = data.policy.selected_intent_id || '—';
+      document.getElementById('intent-scores').textContent = formatScores(data.policy.scores);
+
+      const overrideEl = document.getElementById('override');
+      setBadge(overrideEl, data.execution.override_applied ? 'TRUE' : 'FALSE', data.execution.override_applied ? 'warn' : 'ok');
+
+      const lockEl = document.getElementById('lock');
+      setBadge(lockEl, data.execution.lock_applied ? 'TRUE' : 'FALSE', data.execution.lock_applied ? 'warn' : 'ok');
+
+      const blockedEl = document.getElementById('blocked');
+      setBadge(blockedEl, data.safety.blocked ? 'TRUE' : 'FALSE', data.safety.blocked ? 'danger' : 'ok');
+
+      document.getElementById('critical').textContent = data.safety.critical_domains.length
+        ? data.safety.critical_domains.join(', ')
+        : '—';
+      document.getElementById('reason').textContent = data.safety.reason || '—';
+
+      const t = new Date(frame.timestamp * 1000).toLocaleTimeString();
+      labels.push(t);
+      batteryData.push(state.battery_level);
+      tempData.push(state.temperature);
+      positionData.push(state.position);
+
+      if (labels.length > maxPoints) {
+        labels.shift();
+        batteryData.shift();
+        tempData.shift();
+        positionData.shift();
+      }
+
+      batteryChart.data.datasets[0].data = batteryData;
+      tempChart.data.datasets[0].data = tempData;
+      positionChart.data.datasets[0].data = positionData;
+
+      batteryChart.update();
+      tempChart.update();
+      positionChart.update();
+
+      const log = document.getElementById('cycle-log');
+      const row = document.createElement('div');
+      row.className = 'log-row';
+      row.innerHTML = `
+        <div>${cycleCount}</div>
+        <div>${t}</div>
+        <div>${state.position.toFixed(2)}</div>
+        <div>${state.battery_level.toFixed(1)}%</div>
+        <div>${state.temperature.toFixed(1)}°C</div>
+        <div>${state.mode}</div>
+        <div>${data.policy.selected_intent_id ? data.policy.selected_intent_id.slice(0,8) : '—'}</div>
+        <div>${data.execution.executed_intent_id ? data.execution.executed_intent_id.slice(0,8) : '—'}</div>
+        <div>${data.safety.blocked ? 'TRUE' : 'FALSE'}</div>
+      `;
+      log.prepend(row);
+      while (log.children.length > maxLogRows) {
+        log.removeChild(log.lastChild);
+      }
+    });
+  </script>
+</body>
+</html>
