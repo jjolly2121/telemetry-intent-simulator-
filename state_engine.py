@@ -26,6 +26,7 @@ class SystemState:
     # LOW_POWER thresholds
     LOW_POWER_ENTRY = 25
     LOW_POWER_EXIT = 30
+    LOW_POWER_EXIT_EPSILON = 0.5
     # Hard safety bounds
     POSITION_MIN = -10.0
     POSITION_MAX = 10.0
@@ -126,7 +127,7 @@ class StateEngine:
 
         # LOW_POWER exit
         if s.mode == "LOW_POWER":
-            if s.battery_level >= s.LOW_POWER_EXIT:
+            if s.battery_level >= s.LOW_POWER_EXIT - s.LOW_POWER_EXIT_EPSILON:
                 s.mode = "NOMINAL"
 
     # -----------------------------
