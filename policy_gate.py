@@ -60,10 +60,13 @@ class PolicyGate:
             # ---- Recovery Scoring ----
 
             if intent.intent_type == "battery_recovery":
+                target = system_state.SAFE_EXIT_BATTERY
+                if system_state.mode == "LOW_POWER":
+                    target = system_state.LOW_POWER_EXIT
+
                 severity = max(
                     0.0,
-                    (system_state.SAFE_EXIT_BATTERY - system_state.battery_level)
-                    / system_state.SAFE_EXIT_BATTERY
+                    (target - system_state.battery_level) / target
                 )
                 score += severity * self.RECOVERY_SCALE
 

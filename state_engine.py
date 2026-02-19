@@ -198,7 +198,10 @@ class StateEngine:
             elif s.mode == "LOW_POWER":
                 target = s.LOW_POWER_EXIT
             else:
-                target = s.SAFE_EXIT_BATTERY
+                if s.battery_level < s.LOW_POWER_EXIT:
+                    target = s.LOW_POWER_EXIT
+                else:
+                    target = s.SAFE_EXIT_BATTERY
 
             if s.battery_level >= target:
                 intent.status = IntentStatus.COMPLETED
