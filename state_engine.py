@@ -188,9 +188,19 @@ class StateEngine:
             if s.position >= goal_value:
                 intent.status = IntentStatus.COMPLETED
 
-        # Recovery completion after stable NOMINAL cycle
-        if intent.intent_type.endswith("_recovery"):
+        # Recovery completion logic
+        if intent.intent_type == "battery_recovery":
+            if s.mode == "SAFE":
+                target = s.SAFE_EXIT_BATTERY
+            elif s.mode == "LOW_POWER":
+                target = s.LOW_POWER_EXIT
+            else:
+                target = s.SAFE_EXIT_BATTERY
 
+            if s.battery_level >= target:
+                intent.status = IntentStatus.COMPLETED
+
+        elif intent.intent_type == "thermal_recovery":
             if s.mode == "NOMINAL":
                 intent.stable_nominal_cycles += 1
             else:
