@@ -113,6 +113,11 @@
         </div>
         <div id="cycle-log" class="log-body"></div>
       </section>
+
+      <section class="panel raw">
+        <div class="panel-title">Telemetry Stream (Raw)</div>
+        <pre id="telemetry-raw" class="raw-body">—</pre>
+      </section>
     </main>
   </div>
 
@@ -121,6 +126,7 @@
 
     const maxPoints = 60;
     const maxLogRows = 80;
+    const maxRawFrames = 30;
     const batteryData = [];
     const tempData = [];
     const positionData = [];
@@ -330,6 +336,15 @@
       log.prepend(row);
       while (log.children.length > maxLogRows) {
         log.removeChild(log.lastChild);
+      }
+
+      const raw = document.getElementById('telemetry-raw');
+      const rawEntry = document.createElement('div');
+      rawEntry.className = 'raw-entry';
+      rawEntry.textContent = JSON.stringify(frame, null, 2);
+      raw.prepend(rawEntry);
+      while (raw.children.length > maxRawFrames) {
+        raw.removeChild(raw.lastChild);
       }
     });
   </script>
