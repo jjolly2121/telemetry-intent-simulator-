@@ -68,7 +68,7 @@ The dashed boundary represents the **onboard autonomous execution system**, whil
 
 ---
 
-## Planned Components
+## Components
 
 | Module | Responsibility |
 |------|----------------|
@@ -76,7 +76,9 @@ The dashed boundary represents the **onboard autonomous execution system**, whil
 | `policy_gate.py` | Validates intent against safety and policy rules |
 | `state_engine.py` | Applies a single state mutation per cycle |
 | `telemetry.py` | Emits execution outcomes and system metrics |
-| `run.py` | Orchestrates simulation cycles |
+| `main.py` | Runs a fixed-cycle simulation and prints telemetry |
+| `mission_control.py` | Real-time mission control dashboard server |
+| `simulation_bootstrap.py` | Shared simulation wiring and initial state |
 
 ---
 
@@ -119,6 +121,57 @@ This simulator is intentionally lightweight and educational. It is not intended 
 - Configurable policy rules  
 - Telemetry aggregation and summary analytics  
 - Visualization of intent lifecycles  
+
+---
+
+## Quick Start
+
+Install dependencies:
+```bash
+/usr/local/bin/python3 -m pip install flask flask-socketio gevent gevent-websocket
+```
+
+Run the mission control dashboard:
+```bash
+/usr/local/bin/python3 /Users/jeffreyjolly/telemetry-intent-simulator-/mission_control.py
+```
+
+Open:
+```
+http://localhost:5050
+```
+
+Run the CLI simulation (prints telemetry frames):
+```bash
+/usr/local/bin/python3 /Users/jeffreyjolly/telemetry-intent-simulator-/main.py
+```
+
+---
+
+## Mission Control Dashboard
+
+The dashboard is read-only and streams telemetry in real time via WebSockets.
+It displays:
+- System state (position, battery, temperature, mode)
+- Policy decisions (selected intent, scores, override, lock)
+- Safety state (blocked, critical domains, reason)
+- Trends (battery, temperature, position)
+- Cycle log and raw telemetry stream
+
+---
+
+## Shared Simulation Setup
+
+Initial conditions are defined in:
+`/Users/jeffreyjolly/telemetry-intent-simulator-/simulation_bootstrap.py`
+
+To change initial state, edit the bootstrap file, for example:
+```python
+system_state.battery_level = 4.0
+system_state.temperature = 120.0
+```
+
+Both `main.py` and `mission_control.py` read from this same bootstrap file.
 
 ---
 

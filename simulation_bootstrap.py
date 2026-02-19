@@ -14,6 +14,7 @@ def build_simulation():
     system_state = SystemState()
     # main.py
     system_state.battery_level = 4.0
+    system_state.temperature = 120.0
 
     # Example: set initial conditions here if needed
     # system_state.battery_level = 4.0
