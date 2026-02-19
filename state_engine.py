@@ -27,6 +27,13 @@ class SystemState:
     LOW_POWER_ENTRY = 25
     LOW_POWER_EXIT = 30
     LOW_POWER_EXIT_EPSILON = 0.5
+    # Power model (deterministic, cycle-based)
+    BASE_LOAD = 0.6
+    SOLAR_CHARGE_RATE = 1.2
+    MAX_CHARGE_RATE = 1.5
+    CHARGE_EFFICIENCY = 0.95
+    ECLIPSE_PERIOD = 20
+    ECLIPSE_DURATION = 6
     # Hard safety bounds
     POSITION_MIN = -10.0
     POSITION_MAX = 10.0
@@ -38,6 +45,7 @@ class SystemState:
         self.battery_level = 100.0
         self.temperature = 25.0
         self.mode = "NOMINAL"
+        self.cycle_count = 0
 
     def snapshot(self):
         return {
@@ -70,12 +78,15 @@ class StateEngine:
         if intent is None:
             return False
 
+        self.system_state.cycle_count += 1
+
         intent.evaluation_cycles += 1
         intent.status = IntentStatus.ACTIVE
 
         # ---- SAFE Recovery Physics ----
 
         if self.system_state.mode == "SAFE":
+            self._apply_power_model()
             self._apply_recovery_physics(intent)
             self._check_completion(intent)
             return True
@@ -88,7 +99,10 @@ class StateEngine:
         # ---- Recovery in LOW_POWER or NOMINAL ----
 
         if intent.intent_type in ("battery_recovery", "thermal_recovery"):
+            self._apply_power_model()
             self._apply_recovery_physics(intent)
+        else:
+            self._apply_power_model()
 
         # ---- Completion Logic ----
 
@@ -148,6 +162,21 @@ class StateEngine:
         s.position += step
         s.battery_level -= battery_cost
         s.temperature += thermal_cost
+
+    def _apply_power_model(self):
+
+        s = self.system_state
+
+        cycle_in_period = s.cycle_count % s.ECLIPSE_PERIOD
+        in_sunlight = cycle_in_period < (s.ECLIPSE_PERIOD - s.ECLIPSE_DURATION)
+
+        solar_in = s.SOLAR_CHARGE_RATE if in_sunlight else 0.0
+        charge_in = min(s.MAX_CHARGE_RATE, solar_in) * s.CHARGE_EFFICIENCY
+        net = charge_in - s.BASE_LOAD
+
+        s.battery_level += net
+        if s.battery_level < s.MIN_BATTERY:
+            s.battery_level = s.MIN_BATTERY
 
     def _apply_recovery_physics(self, intent: Intent):
 
