@@ -201,10 +201,5 @@ class StateEngine:
                 intent.status = IntentStatus.COMPLETED
 
         elif intent.intent_type == "thermal_recovery":
-            if s.mode == "NOMINAL":
-                intent.stable_nominal_cycles += 1
-            else:
-                intent.stable_nominal_cycles = 0
-
-            if intent.stable_nominal_cycles >= 1:
+            if s.temperature <= s.SAFE_EXIT_TEMP + s.SAFE_EXIT_TEMP_EPSILON:
                 intent.status = IntentStatus.COMPLETED
