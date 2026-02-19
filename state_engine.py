@@ -153,9 +153,18 @@ class StateEngine:
         s = self.system_state
 
         if intent.intent_type == "battery_recovery":
-            deficit = s.SAFE_EXIT_BATTERY - s.battery_level
+            if s.mode == "SAFE":
+                target = s.SAFE_EXIT_BATTERY
+            elif s.mode == "LOW_POWER":
+                target = s.LOW_POWER_EXIT
+            else:
+                target = s.SAFE_EXIT_BATTERY
+
+            deficit = target - s.battery_level
             if deficit > 0:
                 s.battery_level += 0.1 * deficit
+                if s.battery_level > target:
+                    s.battery_level = target
 
         if intent.intent_type == "thermal_recovery":
             excess = s.temperature - s.SAFE_EXIT_TEMP
